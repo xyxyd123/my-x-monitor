@@ -3,43 +3,39 @@ name: X-Breaking-Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '* * * * *'
 
 jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 简单推送测试
+      - name: 扫描并推送
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 抓取最新推文
-          # 先拿马斯克做测试，因为他发推快，容易出结果
-          USER_ID="elonmusk"
+          # 1. 账号设置
+          USER_ID="FaytuksNetwork"
+          # 如果只想看突发，下面 URL 末尾可以加 ?filter=BREAKING
           RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
           
-          echo "正在检查 $USER_ID ..."
+          echo "正在以最高频率检查 $USER_ID ..."
           
-          # 获取推文标题
+          # 2. 获取推文
           CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
           
           if [ -z "$CONTENT" ]; then
-            echo "没有内容，退出"
+            echo "当前没有新内容"
             exit 0
           fi
 
-          echo "抓取成功: $CONTENT"
-
-          # 2. 翻译 (直接使用极简方案)
+          # 3. 翻译处理 (调用谷歌翻译)
           T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
           RESULT=$(curl -sL "$T_URL")
           CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
           
-          echo "翻译成功: $CN_TEXT"
-
-          # 3. 推送
-          FINAL_MSG="【翻译】: $CN_TEXT \n\n 【原文】: $CONTENT"
-          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=监控提醒&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
+          # 4. 构造消息并推送
+          FINAL_MSG="【中文翻译】: $CN_TEXT \n\n 【英文原文】: $CONTENT"
+          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=X监控提醒&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
           
           curl -s "$PUSH_URL"
-          echo "推送流程结束"
+          echo "频率：每分钟扫描已生效"
