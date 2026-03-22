@@ -3,44 +3,72 @@ name: X-High-Frequency-Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: '* * * * *' # 尝试每分钟扫描，适应 FirstSquawk 的高频率
+    - cron: '*/3 * * * *' # 设置为3分钟一次，兼顾稳定性和速度
 
 jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 扫描、翻译并推送
+      - name: 扫描并推送
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 设置账号为 FirstSquawk
+          # 1. 监控对象
           USER_ID="FirstSquawk"
           
-          # 构造 RSS 链接
-          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
+          # 2. 尝试获取内容 (带上反缓存参数 _=$(date +%s))
+          # 先尝试主接口，不行就换备用
+          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID?limit=1&_=$(date +%s)"
+          echo "正在全力抓取 $USER_ID 的最新动态..."
           
-          echo "正在全力监控 $USER_ID ..."
-          
-          # 2. 抓取最新内容
-          CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-          
+          # 提取标题内容
+          RAW_XML=$(curl -sL "$RSS_URL")
+          CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+
+          # 如果主接口没抓到，尝试备用接口
           if [ -z "$CONTENT" ]; then
-            echo "没有发现新推文"
+            echo "主接口未响应，切换备用接口..."
+            RSS_URL_BACKUP="https://hub.slarker.me/twitter/user/$USER_ID?limit=1"
+            RAW_XML=$(curl -sL "$RSS_URL_BACKUP")
+            CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          fi
+
+          if [ -z "$CONTENT" ]; then
+            echo "❌ 两个接口均未发现新内容，可能账号暂时没发推。"
             exit 0
           fi
 
-          echo "抓取成功: $CONTENT"
+          echo "✅ 抓取成功: $CONTENT"
 
-          # 3. 极速翻译 (Google Translate)
-          T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
-          RESULT=$(curl -sL "$T_URL")
-          CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
-          
-          echo "翻译结果: $CN_TEXT"
+          # 3. 智能翻译逻辑 (Python 强力驱动)
+          cat << 'EOF' > translate_task.py
+import os, urllib.parse, urllib.request, json
 
-          # 4. 推送到你的 PushDeer
-          FINAL_MSG="【金融/速报】: $CN_TEXT \n\n 【原文】: $CONTENT"
-          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk实时监控&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
-          
-          curl -s "$PUSH_URL"
-          echo "本轮监控结束！"
+def do_job():
+    text = os.environ.get('RAW_TEXT', '')
+    key = os.environ.get('PUSH_KEY', '')
+    
+    # 谷歌翻译接口
+    try:
+        t_url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}"
+        req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as res:
+            data = json.loads(res.read().decode('utf-8'))
+            text_cn = data[0][0][0]
+    except:
+        text_cn = "翻译解析失败"
+
+    # PushDeer 推送
+    msg = f"【中文】: {text_cn}\n\n【原文】: {text}"
+    p_url = f"https://api2.pushdeer.com/message/push?pushkey={key}&text=FirstSquawk速报&desp={urllib.parse.quote(msg)}"
+    urllib.request.urlopen(p_url)
+
+if __name__ == "__main__":
+    do_job()
+EOF
+
+          # 4. 执行翻译与推送
+          export RAW_TEXT="$CONTENT"
+          export PUSH_KEY="$PUSHDEER_KEY"
+          python3 translate_task.py
+          echo "🚀 任务完成，消息已发出！"
