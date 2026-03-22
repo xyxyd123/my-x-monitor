@@ -1,41 +1,46 @@
-name: X-Breaking-Monitor
+name: X-High-Frequency-Monitor
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'  # 这样就改成了每 5 分钟运行一次
+    - cron: '* * * * *' # 尝试每分钟扫描，适应 FirstSquawk 的高频率
 
 jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 扫描并推送
+      - name: 扫描、翻译并推送
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 账号设置
-          USER_ID="FaytuksNetwork"
-          # 如果只想看突发，下面 URL 末尾可以加 ?filter=BREAKING
+          # 1. 设置账号为 FirstSquawk
+          USER_ID="FirstSquawk"
+          
+          # 构造 RSS 链接
           RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
           
-          echo "正在以最高频率检查 $USER_ID ..."
+          echo "正在全力监控 $USER_ID ..."
           
-          # 2. 获取推文
+          # 2. 抓取最新内容
           CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
           
           if [ -z "$CONTENT" ]; then
-            echo "当前没有新内容"
+            echo "没有发现新推文"
             exit 0
           fi
 
-          # 3. 翻译处理 (调用谷歌翻译)
+          echo "抓取成功: $CONTENT"
+
+          # 3. 极速翻译 (Google Translate)
           T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
           RESULT=$(curl -sL "$T_URL")
           CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
           
-          # 4. 构造消息并推送
-          FINAL_MSG="【中文翻译】: $CN_TEXT \n\n 【英文原文】: $CONTENT"
-          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=X监控提醒&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
+          echo "翻译结果: $CN_TEXT"
+
+          # 4. 推送到你的 PushDeer
+          FINAL_MSG="【金融/速报】: $CN_TEXT \n\n 【原文】: $CONTENT"
+          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk实时监控&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
           
           curl -s "$PUSH_URL"
-          echo "频率：每分钟扫描已生效"
+          echo "本轮监控结束！"
