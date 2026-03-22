@@ -1,10 +1,8 @@
 name: X-Simple-Monitor
-
 on:
   workflow_dispatch:
   schedule:
     - cron: '*/5 * * * *'
-
 jobs:
   check-and-push:
     runs-on: ubuntu-latest
@@ -13,14 +11,8 @@ jobs:
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          USER_ID="FirstSquawk"
-          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID?limit=1"
-          echo "Checking $USER_ID..."
-          CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-          if [ -z "$CONTENT" ]; then
-            echo "No content"
-            exit 0
-          fi
+          CONTENT=$(curl -sL "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          [ -z "$CONTENT" ] && (echo "No content"; exit 0)
           echo "Content: $CONTENT"
           CLEAN_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")
           curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk&desp=$CLEAN_MSG"
