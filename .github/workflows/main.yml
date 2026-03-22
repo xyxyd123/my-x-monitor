@@ -3,7 +3,7 @@ name: X-Breaking-Monitor
 on:
   workflow_dispatch: # 允许手动测试
   schedule:
-    - cron: '*/5 * * * *' # 每 5 分钟自动运行一次
+    - cron: '* * * * *' # 每分钟扫描一次
 
 jobs:
   check-and-push:
@@ -18,7 +18,7 @@ jobs:
           
           # 2. 构造 RSS 链接
           # 注意：这里 filter=BREAKING 改成了大写，匹配他的习惯
-          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID?filter=BREAKING"
+          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
           
           echo "正在检查账号: $USER_ID ..."
           
