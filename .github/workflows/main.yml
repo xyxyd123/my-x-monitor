@@ -3,60 +3,43 @@ name: X-Breaking-Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/2 * * * *' # 设置为2分钟一次，更稳定，防止被封IP
+    - cron: '*/5 * * * *'
 
 jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 检查、翻译并推送
+      - name: 简单推送测试
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          USER_ID="FaytuksNetwork"
-          # 使用另一个备用 RSSHub 实例，防止刚才那个挂了
-          RSS_URL="https://rsshub.feeded.xyz/twitter/user/$USER_ID"
+          # 1. 抓取最新推文
+          # 先拿马斯克做测试，因为他发推快，容易出结果
+          USER_ID="elonmusk"
+          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
           
-          # 1. 抓取最新内容
-          CONTENT_EN=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-
-          if [ -z "$CONTENT_EN" ]; then
-            echo "未抓取到内容，跳过。"
+          echo "正在检查 $USER_ID ..."
+          
+          # 获取推文标题
+          CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          
+          if [ -z "$CONTENT" ]; then
+            echo "没有内容，退出"
             exit 0
           fi
 
-          echo "抓到原文: $CONTENT_EN"
+          echo "抓取成功: $CONTENT"
 
-          # 2. 安全地进行翻译和推送
-          # 我们把逻辑写在一个简单的 python 文件里执行，彻底解决引号冲突问题
-          cat << 'EOF' > notify.py
-import os, urllib.parse, urllib.request, json
+          # 2. 翻译 (直接使用极简方案)
+          T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
+          RESULT=$(curl -sL "$T_URL")
+          CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
+          
+          echo "翻译成功: $CN_TEXT"
 
-def translate_and_push():
-    text = os.environ.get('RAW_TEXT', '')
-    key = os.environ.get('PUSH_KEY', '')
-    
-    # 翻译逻辑
-    try:
-        t_url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}"
-        req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as res:
-            data = json.loads(res.read().decode('utf-8'))
-            text_cn = data[0][0][0]
-    except:
-        text_cn = "翻译失败"
-
-    # 推送逻辑
-    msg = f"【中文】: {text_cn}\n\n【原文】: {text}"
-    p_url = f"https://api2.pushdeer.com/message/push?pushkey={key}&text=X速报&desp={urllib.parse.quote(msg)}"
-    urllib.request.urlopen(p_url)
-
-if __name__ == "__main__":
-    translate_and_push()
-EOF
-
-          # 3. 运行 Python 脚本
-          export RAW_TEXT="$CONTENT_EN"
-          export PUSH_KEY="$PUSHDEER_KEY"
-          python3 notify.py
-          echo "处理完成！"
+          # 3. 推送
+          FINAL_MSG="【翻译】: $CN_TEXT \n\n 【原文】: $CONTENT"
+          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=监控提醒&desp=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")"
+          
+          curl -s "$PUSH_URL"
+          echo "推送流程结束"
