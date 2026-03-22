@@ -13,27 +13,14 @@ jobs:
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 监控 FirstSquawk
           USER_ID="FirstSquawk"
           RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID?limit=1"
-          
-          echo "正在尝试抓取 $USER_ID ..."
-          
-          # 获取推文内容
+          echo "Checking $USER_ID..."
           CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-          
           if [ -z "$CONTENT" ]; then
-            echo "没有抓到新推文，RSS 可能在缓存中。"
+            echo "No content"
             exit 0
           fi
-
-          echo "抓取成功: $CONTENT"
-
-          # 2. 纯英文推送 (不带翻译)
-          # 使用 python 简单处理一下编码，防止特殊字符报错
+          echo "Content: $CONTENT"
           CLEAN_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")
-          
-          PUSH_URL="https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk速报&desp=$CLEAN_MSG"
-          
-          curl -s "$PUSH_URL"
-          echo "推送请求已发送！"
+          curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk&desp=$CLEAN_MSG"
