@@ -1,4 +1,4 @@
-name: X-Final-Monitor
+name: X-Final-Rescue
 on:
   workflow_dispatch:
   schedule:
@@ -7,41 +7,35 @@ jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 三源探测监控
+      - name: 终极救援监控
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 尝试三个不同的 RSSHub 节点，增加成功率
-          SOURCES=(
-            "https://hub.slarker.me/twitter/user/FirstSquawk?limit=1"
-            "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1"
-            "https://rsshub.app/twitter/user/FirstSquawk?limit=1"
-          )
+          # 换成这个专门为高频账号优化的源
+          RSS_URL="https://nitter.net/FirstSquawk/rss"
+          
+          echo "正在从 Nitter 镜像站抓取..."
+          XML=$(curl -sL --max-time 15 "$RSS_URL")
+          
+          # Nitter 的 XML 格式略有不同，我们换个提取方式
+          CONTENT=$(echo "$XML" | grep -oP '(?<=<title>).*?(?=</title>)' | sed -n '2p')
 
-          CONTENT=""
-          for url in "${SOURCES[@]}"; do
-            echo "尝试从 $url 抓取..."
-            XML=$(curl -sL --max-time 10 "$url")
-            CONTENT=$(echo "$XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-            if [ -n "$CONTENT" ] && [ "$CONTENT" != "RSSHub" ]; then
-              echo "✅ 抓取成功！"
-              break
-            fi
-          done
+          if [ -z "$CONTENT" ] || [ "$CONTENT" = "FirstSquawk" ]; then
+            echo "❌ Nitter 也没抓到，尝试最后的 RSSHub 备弹..."
+            CONTENT=$(curl -sL "https://rsshub.app/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          fi
 
           if [ -z "$CONTENT" ]; then
-            echo "❌ 抱歉，三个数据源目前都抓不到新内容，请稍后再试。"
+            echo "⚠️ 全线告急，Twitter 接口可能在维护，请半小时后再试。"
             exit 0
           fi
 
-          echo "最新内容: $CONTENT"
+          echo "✅ 抓取成功: $CONTENT"
 
-          # 翻译处理
+          # 翻译与推送
           T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
-          RESULT=$(curl -sL "$T_URL")
-          CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
-
-          # 推送
+          CN_TEXT=$(curl -sL "$T_URL" | python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])")
+          
           FINAL_MSG="【速报】: $CN_TEXT \n\n 【原文】: $CONTENT"
           CLEAN_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")
           curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk&desp=$CLEAN_MSG"
