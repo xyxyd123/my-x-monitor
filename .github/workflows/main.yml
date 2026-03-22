@@ -1,7 +1,7 @@
 name: X-Breaking-Monitor
 
 on:
-  workflow_dispatch: # 允许手动测试
+  workflow_dispatch:
   schedule:
     - cron: '* * * * *' # 每分钟扫描一次
 
@@ -13,28 +13,25 @@ jobs:
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 设置账号 ID
           USER_ID="FaytuksNetwork"
           
-          # 2. 构造 RSS 链接
-          # 注意：这里 filter=BREAKING 改成了大写，匹配他的习惯
+          # 去掉了末尾的 filter，现在会抓取该账号的所有最新推文
           RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
           
-          echo "正在检查账号: $USER_ID ..."
+          echo "正在检查账号: $USER_ID 的全部动态..."
           
-          # 3. 抓取最新内容
-          # 我们增加一个逻辑：如果大写 BREAKING 没搜到，尝试小写 Breaking，双重保险
+          # 抓取最新一条内容
           RAW_CONTENT=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
 
           if [ ! -z "$RAW_CONTENT" ]; then
-            echo "发现匹配消息: $RAW_CONTENT"
+            echo "当前最新动态: $RAW_CONTENT"
             
-            # 对内容进行简单的 URL 编码，防止空格导致推送失败
+            # 编码处理
             CLEAN_CONTENT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$RAW_CONTENT'''))")
             
-            # 4. 执行推送
-            curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=Faytuks紧急速报&desp=$CLEAN_CONTENT"
+            # 推送到 PushDeer
+            curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=X新动态&desp=$CLEAN_CONTENT"
             echo "推送已发出！"
           else
-            echo "当前没有发现带 BREAKING 的新消息。"
+            echo "暂时没有抓取到任何内容，请检查 RSS 链接是否可用。"
           fi
