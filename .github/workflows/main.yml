@@ -1,9 +1,9 @@
-name: X-Breaking-Monitor-With-Translation
+name: X-Breaking-Monitor
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '* * * * *' # 计划任务，由于GitHub限制，免费版实际约5分钟运行一次
+    - cron: '*/2 * * * *' # 设置为2分钟一次，更稳定，防止被封IP
 
 jobs:
   check-and-push:
@@ -13,44 +13,50 @@ jobs:
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 设置监控账号
           USER_ID="FaytuksNetwork"
+          # 使用另一个备用 RSSHub 实例，防止刚才那个挂了
+          RSS_URL="https://rsshub.feeded.xyz/twitter/user/$USER_ID"
           
-          # 获取全量推文（不加过滤，方便你测试）
-          RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID"
-          
-          echo "正在抓取 $USER_ID 的动态..."
-          
-          # 1. 提取最新一条推文内容
-          RAW_EN=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          # 1. 抓取最新内容
+          CONTENT_EN=$(curl -sL "$RSS_URL" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
 
-          if [ ! -z "$RAW_EN" ]; then
-            echo "抓到原文: $RAW_EN"
-            
-            # 2. 调用 Python 进行 Google 翻译 (英文 -> 中文)
-            TRANSLATED_CN=$(python3 -c "
-import urllib.parse, urllib.request, json
-try:
-    text = \"\"\"$RAW_EN\"\"\"
-    url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=' + urllib.parse.quote(text)
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req) as response:
-        data = json.loads(response.read().decode('utf-8'))
-        print(data[0][0][0])
-except Exception as e:
-    print('翻译失败，显示原文')
-")
-            
-            # 3. 构造推送内容（包含中文和原文）
-            # %0A 是换行符，让手机通知看起来更整齐
-            FULL_MSG="【中文翻译】: $TRANSLATED_CN %0A%0A【英文原文】: $RAW_EN"
-            
-            # 对消息进行编码，防止特殊字符导致推送断掉
-            CLEAN_CONTENT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FULL_MSG'''))")
-            
-            # 4. 执行 PushDeer 推送
-            curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=X新动态&desp=$CLEAN_CONTENT"
-            echo "推送已发送到 PushDeer！"
-          else
-            echo "未抓取到内容，可能是RSSHub服务波动，请稍后再试。"
+          if [ -z "$CONTENT_EN" ]; then
+            echo "未抓取到内容，跳过。"
+            exit 0
           fi
+
+          echo "抓到原文: $CONTENT_EN"
+
+          # 2. 安全地进行翻译和推送
+          # 我们把逻辑写在一个简单的 python 文件里执行，彻底解决引号冲突问题
+          cat << 'EOF' > notify.py
+import os, urllib.parse, urllib.request, json
+
+def translate_and_push():
+    text = os.environ.get('RAW_TEXT', '')
+    key = os.environ.get('PUSH_KEY', '')
+    
+    # 翻译逻辑
+    try:
+        t_url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}"
+        req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as res:
+            data = json.loads(res.read().decode('utf-8'))
+            text_cn = data[0][0][0]
+    except:
+        text_cn = "翻译失败"
+
+    # 推送逻辑
+    msg = f"【中文】: {text_cn}\n\n【原文】: {text}"
+    p_url = f"https://api2.pushdeer.com/message/push?pushkey={key}&text=X速报&desp={urllib.parse.quote(msg)}"
+    urllib.request.urlopen(p_url)
+
+if __name__ == "__main__":
+    translate_and_push()
+EOF
+
+          # 3. 运行 Python 脚本
+          export RAW_TEXT="$CONTENT_EN"
+          export PUSH_KEY="$PUSHDEER_KEY"
+          python3 notify.py
+          echo "处理完成！"
