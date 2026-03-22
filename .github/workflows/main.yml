@@ -3,7 +3,7 @@ name: X-Breaking-Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: '* * * * *'
+    - cron: '*/5 * * * *'  # 这样就改成了每 5 分钟运行一次
 
 jobs:
   check-and-push:
