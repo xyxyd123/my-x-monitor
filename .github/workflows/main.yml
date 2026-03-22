@@ -7,34 +7,41 @@ jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 监控翻译推送
+      - name: 三源探测监控
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          # 1. 抓取内容 (多源尝试)
-          CONTENT=$(curl -sL "https://hub.slarker.me/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          # 尝试三个不同的 RSSHub 节点，增加成功率
+          SOURCES=(
+            "https://hub.slarker.me/twitter/user/FirstSquawk?limit=1"
+            "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1"
+            "https://rsshub.app/twitter/user/FirstSquawk?limit=1"
+          )
+
+          CONTENT=""
+          for url in "${SOURCES[@]}"; do
+            echo "尝试从 $url 抓取..."
+            XML=$(curl -sL --max-time 10 "$url")
+            CONTENT=$(echo "$XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+            if [ -n "$CONTENT" ] && [ "$CONTENT" != "RSSHub" ]; then
+              echo "✅ 抓取成功！"
+              break
+            fi
+          done
+
           if [ -z "$CONTENT" ]; then
-            CONTENT=$(curl -sL "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-          fi
-          
-          # 2. 如果没抓到，直接退出
-          if [ -z "$CONTENT" ]; then
-            echo "No news found."
+            echo "❌ 抱歉，三个数据源目前都抓不到新内容，请稍后再试。"
             exit 0
           fi
-          
-          echo "Found news: $CONTENT"
-          
-          # 3. 翻译
-          # 用一个临时变量存翻译结果
+
+          echo "最新内容: $CONTENT"
+
+          # 翻译处理
           T_URL="https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")"
           RESULT=$(curl -sL "$T_URL")
           CN_TEXT=$(python3 -c "import json, sys; print(json.loads(sys.stdin.read())[0][0][0])" <<< "$RESULT")
-          
-          echo "Translated: $CN_TEXT"
-          
-          # 4. 推送
-          FINAL_MSG="【中文】: $CN_TEXT \n\n 【原文】: $CONTENT"
+
+          # 推送
+          FINAL_MSG="【速报】: $CN_TEXT \n\n 【原文】: $CONTENT"
           CLEAN_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FINAL_MSG'''))")
-          
           curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk&desp=$CLEAN_MSG"
