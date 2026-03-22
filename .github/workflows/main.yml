@@ -1,4 +1,4 @@
-name: X-Simple-Monitor
+name: X-Final-Monitor
 on:
   workflow_dispatch:
   schedule:
@@ -7,12 +7,40 @@ jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 纯消息推送测试
+      - name: 扫描翻译推送
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
-          CONTENT=$(curl -sL "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
-          [ -z "$CONTENT" ] && (echo "No content"; exit 0)
+          # 换一个更稳的备用源 hub.slarker.me
+          RAW_XML=$(curl -sL "https://hub.slarker.me/twitter/user/FirstSquawk?limit=1")
+          CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          
+          if [ -z "$CONTENT" ]; then
+            echo "抓取失败，尝试主源..."
+            CONTENT=$(curl -sL "https://rsshub.rssforever.com/twitter/user/FirstSquawk?limit=1" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          fi
+
+          if [ -z "$CONTENT" ]; then echo "No content"; exit 0; fi
+          
           echo "Content: $CONTENT"
-          CLEAN_MSG=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$CONTENT'''))")
-          curl -s "https://api2.pushdeer.com/message/push?pushkey=$PUSHDEER_KEY&text=FirstSquawk&desp=$CLEAN_MSG"
+          
+          # 翻译并发送
+          python3 -c "
+import os, urllib.parse, urllib.request, json
+text = os.environ.get('RAW_TEXT', '')
+key = os.environ.get('PUSH_KEY', '')
+try:
+    t_url = f'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}'
+    req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as res:
+        text_cn = json.loads(res.read().decode('utf-8'))[0][0][0]
+except:
+    text_cn = '翻译暂不可用'
+msg = f'【中文】: {text_cn}\n\n【原文】: {text}'
+p_url = f'https://api2.pushdeer.com/message/push?pushkey={key}&text=FirstSquawk&desp={urllib.parse.quote(msg)}'
+urllib.request.urlopen(p_url)
+"
+        env:
+          RAW_TEXT: ${{ env.CONTENT }} # 这一行没用，看下面真正的 env
+          PUSH_KEY: ${{ secrets.PUSHDEER_KEY }}
+          RAW_TEXT: $CONTENT # 这一步很关键
