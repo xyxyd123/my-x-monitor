@@ -9,45 +9,48 @@ jobs:
   check-and-push:
     runs-on: ubuntu-latest
     steps:
-      - name: 扫描并推送
+      - name: 扫描、翻译并推送
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
         run: |
+          # 1. 设置账号
           USER_ID="FirstSquawk"
-          # 尝试抓取
           RSS_URL="https://rsshub.rssforever.com/twitter/user/$USER_ID?limit=1&_=$(date +%s)"
+          
+          # 2. 抓取内容
           RAW_XML=$(curl -sL "$RSS_URL")
           CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
 
+          # 如果第一源没抓到，换备用源
           if [ -z "$CONTENT" ]; then
-            echo "主接口未响应，尝试备用..."
-            RSS_URL="https://hub.slarker.me/twitter/user/$USER_ID?limit=1"
-            RAW_XML=$(curl -sL "$RSS_URL")
-            CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
+          RSS_URL="https://hub.slarker.me/twitter/user/$USER_ID?limit=1"
+          RAW_XML=$(curl -sL "$RSS_URL")
+          CONTENT=$(echo "$RAW_XML" | grep -oP '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' | head -n 1)
           fi
 
           if [ -z "$CONTENT" ]; then
-            echo "未发现新推文"
-            exit 0
+          echo "No new content found."
+          exit 0
           fi
 
-          # 写入 Python 脚本 (注意这里的 EOF 必须顶格)
-          cat << 'EOF' > notify.py
+          # 3. 极简翻译与推送 (不再使用外部文件，直接运行 Python 命令)
+          export RAW_TEXT="$CONTENT"
+          export PUSH_KEY="$PUSHDEER_KEY"
+          
+          python3 -c "
 import os, urllib.parse, urllib.request, json
 text = os.environ.get('RAW_TEXT', '')
 key = os.environ.get('PUSH_KEY', '')
 try:
-    t_url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}"
+    t_url = f'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q={urllib.parse.quote(text)}'
     req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req) as res:
         text_cn = json.loads(res.read().decode('utf-8'))[0][0][0]
 except:
-    text_cn = "翻译失败"
-msg = f"【速报】: {text_cn}\n\n【原文】: {text}"
-p_url = f"https://api2.pushdeer.com/message/push?pushkey={key}&text=FirstSquawk&desp={urllib.parse.quote(msg)}"
-urllib.request.urlopen(p_url)
-EOF
+    text_cn = '翻译暂不可用'
 
-          export RAW_TEXT="$CONTENT"
-          export PUSH_KEY="$PUSHDEER_KEY"
-          python3 notify.py
+msg = f'【速报】: {text_cn}\n\n【原文】: {text}'
+p_url = f'https://api2.pushdeer.com/message/push?pushkey={key}&text=FirstSquawk&desp={urllib.parse.quote(msg)}'
+urllib.request.urlopen(p_url)
+"
+          echo "Success!"
